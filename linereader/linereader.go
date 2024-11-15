@@ -2,10 +2,9 @@ package linereader
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
-	"net/http"
-	"strings"
 )
 
 type LineReader struct {
@@ -15,7 +14,7 @@ type LineReader struct {
 
 // ErrBinaryContent is returned when attempting to read lines
 // out of a stream that does not look like text
-var ErrBinaryContent = errors.New("Cannot read binary content")
+var ErrBinaryContent = errors.New("cannot read binary content")
 
 func NewLineReader(reader io.Reader) *LineReader {
 	return &LineReader{
@@ -30,7 +29,7 @@ func (lr *LineReader) Read(p []byte) (int, error) {
 		lr.sample = append(lr.sample, p[:min(r, i)]...)
 		r = 512 - len(lr.sample)
 		if r == 0 || err == io.EOF {
-			if !isText(lr.sample) {
+			if bytes.IndexByte(lr.sample, 0) != -1 {
 				return i, ErrBinaryContent
 			}
 		}
@@ -48,20 +47,6 @@ func (lr *LineReader) GetLines() ([]string, error) {
 
 }
 
-func isText(b []byte) bool {
-	if strings.Contains(http.DetectContentType(b), "text") || len(b) == 0 {
-		return true
-	}
-	return false
-}
-
 func GetLines(r io.Reader) ([]string, error) {
 	return NewLineReader(r).GetLines()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

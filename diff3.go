@@ -10,9 +10,9 @@ Ported to go by Javier Peletier @jpeletier
 package diff3
 
 import (
-	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -29,7 +29,6 @@ type candidate struct {
 // J. W. Hunt and M. D. McIlroy, An algorithm for differential file
 // comparison, Bell Telephone Laboratories CSTR #41 (1976)
 // http://www.cs.dartmouth.edu/~doug/
-//
 func lcs(file1, file2 []string) *candidate {
 	var equivalenceClasses map[string][]int
 	var file2indices []int
@@ -111,7 +110,7 @@ func diffComm(file1, file2 []string) []*resultStruct {
 
 	processCommon := func() {
 		if len(common.common) != 0 {
-			reverse(common.common)
+			slices.Reverse(common.common)
 			result = append(result, common)
 			common = new(resultStruct)
 		}
@@ -134,8 +133,8 @@ func diffComm(file1, file2 []string) []*resultStruct {
 
 		if len(different.file1) != 0 || len(different.file2) != 0 {
 			processCommon()
-			reverse(different.file1)
-			reverse(different.file2)
+			slices.Reverse(different.file1)
+			slices.Reverse(different.file2)
 			result = append(result, different)
 		}
 
@@ -146,7 +145,7 @@ func diffComm(file1, file2 []string) []*resultStruct {
 
 	processCommon()
 
-	reverseResult(result)
+	slices.Reverse(result)
 	return result
 }
 
@@ -194,7 +193,7 @@ func diffPatch(file1, file2 []string) []*patch {
 		}
 	}
 
-	reverseDiffPatchResult(result)
+	slices.Reverse(result)
 	return result
 }
 
@@ -228,7 +227,9 @@ func invertPatch(p []*patch) {
 // Applies a applyPatch to a file.
 //
 // Given file1 and file2,
-//   applyPatch(file1, diffPatch(file1, file2))
+//
+//	applyPatch(file1, diffPatch(file1, file2))
+//
 // should give file2.
 func applyPatch(file []string, p []*patch) []string {
 	var result []string
@@ -281,7 +282,7 @@ func diffIndices(file1, file2 []string) []*diffIndicesResult {
 		}
 	}
 
-	reverseDiffIndicesResult(result)
+	slices.Reverse(result)
 	return result
 }
 
@@ -358,7 +359,7 @@ func diff3MergeIndices(a, o, b []string) [][]int {
 			// do the same for the right; then, correct for skew
 			// in the regions of o that each side changed, and
 			// report appropriate spans for the three sides.
-			regions := [][]int{[]int{len(a), -1, len(o), -1}, nil, []int{len(b), -1, len(o), -1}}
+			regions := [][]int{{len(a), -1, len(o), -1}, nil, {len(b), -1, len(o), -1}}
 			for i := firstHunkIndex; i <= hunkIndex; i++ {
 				hunk = hunks[i]
 				side := hunk[1]
@@ -526,6 +527,6 @@ func Merge(a, o, b io.Reader, detailed bool, labelA string, labelB string) (*Mer
 	}
 	return &MergeResult{
 		Conflicts: conflicts,
-		Result:    bytes.NewReader([]byte(strings.Join(lines, "\n"))),
+		Result:    strings.NewReader(strings.Join(lines, "\n")),
 	}, nil
 }
