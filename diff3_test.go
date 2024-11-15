@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"testing"
@@ -12,16 +11,12 @@ import (
 	"github.com/epiclabs-io/diff3"
 )
 
-func rd(st string) io.Reader {
-	return bytes.NewReader([]byte(st))
-}
-
 func compareReader(t *testing.T, a, b io.Reader) bool {
-	abytes, err := ioutil.ReadAll(a)
+	abytes, err := io.ReadAll(a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bbytes, err := ioutil.ReadAll(b)
+	bbytes, err := io.ReadAll(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +27,7 @@ func TestDiff3(t *testing.T) {
 
 	const testDir = "./testdata"
 	const generate = false // set to true to genereate the expected files *-m.txt and *-error.txt
-	files, err := ioutil.ReadDir(testDir)
+	files, err := os.ReadDir(testDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,7 +40,7 @@ func TestDiff3(t *testing.T) {
 		}
 	}
 
-	for k, _ := range tests {
+	for k := range tests {
 		func() {
 			a, err := os.Open(fmt.Sprintf("%s/%s-a.txt", testDir, k))
 			if err != nil {
@@ -90,7 +85,7 @@ func TestDiff3(t *testing.T) {
 					}
 				}
 				if mergeError != nil {
-					err = ioutil.WriteFile(fmt.Sprintf("%s/%s-error.txt", testDir, k), []byte(mergeError.Error()), 0666)
+					err = os.WriteFile(fmt.Sprintf("%s/%s-error.txt", testDir, k), []byte(mergeError.Error()), 0666)
 					if err != nil {
 						t.Fatal(err)
 					}
