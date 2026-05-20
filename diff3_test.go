@@ -6,9 +6,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"testing"
 
-	"github.com/devsisters/go-diff3"
+	"github.com/epiclabs-io/diff3"
 )
 
 func compareReader(t *testing.T, a, b io.Reader) bool {
@@ -103,5 +104,67 @@ func TestDiff3(t *testing.T) {
 				}
 			}
 		}()
+	}
+}
+
+func TestMergeWithOptionsDefaultsToLCS(t *testing.T) {
+	a := "one\ntwo modified\nthree"
+	o := "one\ntwo\nthree"
+	b := "one\ntwo\nthree modified"
+
+	defaultResult, err := diff3.Merge(strings.NewReader(a), strings.NewReader(o), strings.NewReader(b), true, "A", "B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultBytes, err := io.ReadAll(defaultResult.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	optionsResult, err := diff3.MergeWithOptions(strings.NewReader(a), strings.NewReader(o), strings.NewReader(b), diff3.MergeOptions{
+		Algorithm:             diff3.DiffAlgorithmLCS,
+		ExcludeFalseConflicts: true,
+		Detailed:              true,
+		LabelA:                "A",
+		LabelB:                "B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	optionsBytes, err := io.ReadAll(optionsResult.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(defaultBytes, optionsBytes) {
+		t.Fatalf("default merge and LCS options merge differ")
+	}
+}
+
+func TestMergeWithOptionsMyers(t *testing.T) {
+	a := "one\ntwo modified\nthree"
+	o := "one\ntwo\nthree"
+	b := "one\ntwo\nthree"
+
+	result, err := diff3.MergeWithOptions(strings.NewReader(a), strings.NewReader(o), strings.NewReader(b), diff3.MergeOptions{
+		Algorithm:             diff3.DiffAlgorithmMyers,
+		ExcludeFalseConflicts: true,
+		Detailed:              true,
+		LabelA:                "A",
+		LabelB:                "B",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := io.ReadAll(result.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Conflicts {
+		t.Fatalf("expected clean merge, got conflict in %q", string(merged))
+	}
+	if got, want := string(merged), "one\ntwo modified\nthree"; got != want {
+		t.Fatalf("unexpected Myers merge output: got %q, want %q", got, want)
 	}
 }
