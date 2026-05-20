@@ -44,16 +44,16 @@ type candidate struct {
 // J. W. Hunt and M. D. McIlroy, An algorithm for differential file
 // comparison, Bell Telephone Laboratories CSTR #41 (1976)
 // http://www.cs.dartmouth.edu/~doug/
-func lcs(file1, file2 []string) *candidate {
-	var equivalenceClasses map[string][]int
+func lcs[T comparable](file1, file2 []T) *candidate {
+	var equivalenceClasses map[T][]int
 	var file2indices []int
 
 	var candidates []*candidate
-	var line string
+	var line T
 	var c *candidate
 	var i, j, jX, r, s int
 
-	equivalenceClasses = make(map[string][]int)
+	equivalenceClasses = make(map[T][]int)
 	for j = 0; j < len(file2); j++ {
 		line = file2[j]
 		equivalenceClasses[line] = append(equivalenceClasses[line], j)
@@ -109,60 +109,60 @@ func lcs(file1, file2 []string) *candidate {
 	return candidates[len(candidates)-1]
 }
 
-type resultStruct struct {
-	common []string
-	file1  []string
-	file2  []string
+type DiffResult[T any] struct {
+	Common []T
+	File1  []T
+	File2  []T
 }
 
 // We apply the LCS to build a 'comm'-style picture of the
 // differences between file1 and file2.
-func diffComm(file1, file2 []string) []*resultStruct {
+func DiffComm[T comparable](file1, file2 []T) []*DiffResult[T] {
 	return diffCommWithAlgorithm(file1, file2, DiffAlgorithmLCS)
 }
 
-func diffCommWithAlgorithm(file1, file2 []string, algorithm DiffAlgorithm) []*resultStruct {
+func diffCommWithAlgorithm[T comparable](file1, file2 []T, algorithm DiffAlgorithm) []*DiffResult[T] {
 	if algorithm == DiffAlgorithmMyers {
 		return diffCommFromIndices(file1, file2, diffIndicesMyers(file1, file2))
 	}
 
-	var result []*resultStruct
+	var result []*DiffResult[T]
 	var tail1 = len(file1)
 	var tail2 = len(file2)
-	var common = new(resultStruct)
+	var common = new(DiffResult[T])
 
 	processCommon := func() {
-		if len(common.common) != 0 {
-			slices.Reverse(common.common)
+		if len(common.Common) != 0 {
+			slices.Reverse(common.Common)
 			result = append(result, common)
-			common = new(resultStruct)
+			common = new(DiffResult[T])
 		}
 	}
 
 	for candidate := lcs(file1, file2); candidate != nil; candidate = candidate.chain {
-		different := new(resultStruct)
+		different := new(DiffResult[T])
 
 		tail1--
 		for tail1 > candidate.file1index {
-			different.file1 = append(different.file1, file1[tail1])
+			different.File1 = append(different.File1, file1[tail1])
 			tail1--
 		}
 
 		tail2--
 		for tail2 > candidate.file2index {
-			different.file2 = append(different.file2, file2[tail2])
+			different.File2 = append(different.File2, file2[tail2])
 			tail2--
 		}
 
-		if len(different.file1) != 0 || len(different.file2) != 0 {
+		if len(different.File1) != 0 || len(different.File2) != 0 {
 			processCommon()
-			slices.Reverse(different.file1)
-			slices.Reverse(different.file2)
+			slices.Reverse(different.File1)
+			slices.Reverse(different.File2)
 			result = append(result, different)
 		}
 
 		if tail1 >= 0 {
-			common.common = append(common.common, file1[tail1])
+			common.Common = append(common.Common, file1[tail1])
 		}
 	}
 
@@ -172,26 +172,26 @@ func diffCommWithAlgorithm(file1, file2 []string, algorithm DiffAlgorithm) []*re
 	return result
 }
 
-func diffCommFromIndices(file1, file2 []string, indices []*diffIndicesResult) []*resultStruct {
-	var result []*resultStruct
+func diffCommFromIndices[T comparable](file1, file2 []T, indices []*diffIndicesResult) []*DiffResult[T] {
+	var result []*DiffResult[T]
 	tail1 := 0
 	for _, diff := range indices {
 		if diff.file1[0] > tail1 {
-			result = append(result, &resultStruct{
-				common: file1[tail1:diff.file1[0]],
+			result = append(result, &DiffResult[T]{
+				Common: file1[tail1:diff.file1[0]],
 			})
 		}
 		tail1 = diff.file1[0] + diff.file1[1]
 
 		if diff.file1[1] > 0 || diff.file2[1] > 0 {
-			result = append(result, &resultStruct{
-				file1: file1[diff.file1[0] : diff.file1[0]+diff.file1[1]],
-				file2: file2[diff.file2[0] : diff.file2[0]+diff.file2[1]],
+			result = append(result, &DiffResult[T]{
+				File1: file1[diff.file1[0] : diff.file1[0]+diff.file1[1]],
+				File2: file2[diff.file2[0] : diff.file2[0]+diff.file2[1]],
 			})
 		}
 	}
 	if tail1 < len(file1) {
-		result = append(result, &resultStruct{common: file1[tail1:]})
+		result = append(result, &DiffResult[T]{Common: file1[tail1:]})
 	}
 	return result
 }
@@ -336,18 +336,18 @@ type diffIndicesResult struct {
 // We apply the LCS to give a simple representation of the
 // offsets and lengths of mismatched chunks in the input
 // files. This is used by diff3MergeIndices below.
-func diffIndices(file1, file2 []string) []*diffIndicesResult {
+func diffIndices[T comparable](file1, file2 []T) []*diffIndicesResult {
 	return diffIndicesLCS(file1, file2)
 }
 
-func diffIndicesWithAlgorithm(file1, file2 []string, algorithm DiffAlgorithm) []*diffIndicesResult {
+func diffIndicesWithAlgorithm[T comparable](file1, file2 []T, algorithm DiffAlgorithm) []*diffIndicesResult {
 	if algorithm == DiffAlgorithmMyers {
 		return diffIndicesMyers(file1, file2)
 	}
 	return diffIndicesLCS(file1, file2)
 }
 
-func diffIndicesLCS(file1, file2 []string) []*diffIndicesResult {
+func diffIndicesLCS[T comparable](file1, file2 []T) []*diffIndicesResult {
 	var result []*diffIndicesResult
 	tail1 := len(file1)
 	tail2 := len(file2)
@@ -370,7 +370,7 @@ func diffIndicesLCS(file1, file2 []string) []*diffIndicesResult {
 	return result
 }
 
-func diffIndicesMyers(file1, file2 []string) []*diffIndicesResult {
+func diffIndicesMyers[T comparable](file1, file2 []T) []*diffIndicesResult {
 	var result []*diffIndicesResult
 	var last *diffIndicesResult
 	for diff := range shortestEditScript(file1, file2, 0, 0) {
@@ -408,11 +408,11 @@ func (h hunkList) Less(i, j int) bool { return h[i][0] < h[j][0] }
 // Computer Science (FSTTCS), December 2007.
 //
 // (http://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf)
-func diff3MergeIndices(a, o, b []string) [][]int {
+func diff3MergeIndices[T comparable](a, o, b []T) [][]int {
 	return diff3MergeIndicesWithAlgorithm(a, o, b, DiffAlgorithmLCS)
 }
 
-func diff3MergeIndicesWithAlgorithm(a, o, b []string, algorithm DiffAlgorithm) [][]int {
+func diff3MergeIndicesWithAlgorithm[T comparable](a, o, b []T, algorithm DiffAlgorithm) [][]int {
 	m1Ch := make(chan []*diffIndicesResult, 1)
 	go func() {
 		m1Ch <- diffIndicesWithAlgorithm(o, a, algorithm)
@@ -501,47 +501,47 @@ func diff3MergeIndicesWithAlgorithm(a, o, b []string, algorithm DiffAlgorithm) [
 	return result
 }
 
-// Conflict describes a merge conflict
-type Conflict struct {
-	a      []string
-	aIndex int
-	o      []string
-	oIndex int
-	b      []string
-	bIndex int
+// Conflict describes a merge conflict.
+type Conflict[T any] struct {
+	A      []T
+	AIndex int
+	O      []T
+	OIndex int
+	B      []T
+	BIndex int
 }
 
-// Diff3MergeResult describes a merge result
-type Diff3MergeResult struct {
-	ok       []string
-	conflict *Conflict
+// Diff3MergeResult describes a merge result.
+type Diff3MergeResult[T any] struct {
+	Ok       []T
+	Conflict *Conflict[T]
 }
 
 // Diff3Merge applies the output of diff3MergeIndices to actually
 // construct the merged file; the returned result alternates
 // between 'ok' and 'conflict' blocks.
-func Diff3Merge(a, o, b []string, excludeFalseConflicts bool) []*Diff3MergeResult {
+func Diff3Merge[T comparable](a, o, b []T, excludeFalseConflicts bool) []*Diff3MergeResult[T] {
 	return diff3MergeWithAlgorithm(a, o, b, excludeFalseConflicts, DiffAlgorithmLCS)
 }
 
-func Diff3MergeWithOptions(a, o, b []string, opts MergeOptions) []*Diff3MergeResult {
+func Diff3MergeWithOptions[T comparable](a, o, b []T, opts MergeOptions) []*Diff3MergeResult[T] {
 	return diff3MergeWithAlgorithm(a, o, b, opts.ExcludeFalseConflicts, opts.Algorithm)
 }
 
-func diff3MergeWithAlgorithm(a, o, b []string, excludeFalseConflicts bool, algorithm DiffAlgorithm) []*Diff3MergeResult {
-	var result []*Diff3MergeResult
-	files := [][]string{a, o, b}
+func diff3MergeWithAlgorithm[T comparable](a, o, b []T, excludeFalseConflicts bool, algorithm DiffAlgorithm) []*Diff3MergeResult[T] {
+	var result []*Diff3MergeResult[T]
+	files := [][]T{a, o, b}
 	indices := diff3MergeIndicesWithAlgorithm(a, o, b, algorithm)
 
-	var okLines []string
+	var okLines []T
 	flushOk := func() {
 		if len(okLines) != 0 {
-			result = append(result, &Diff3MergeResult{ok: okLines})
+			result = append(result, &Diff3MergeResult[T]{Ok: okLines})
 		}
 		okLines = nil
 	}
 
-	pushOk := func(xs []string) {
+	pushOk := func(xs []T) {
 		for j := 0; j < len(xs); j++ {
 			okLines = append(okLines, xs[j])
 		}
@@ -569,14 +569,14 @@ func diff3MergeWithAlgorithm(a, o, b []string, excludeFalseConflicts bool, algor
 				pushOk(files[0][x[1] : x[1]+x[2]])
 			} else {
 				flushOk()
-				result = append(result, &Diff3MergeResult{
-					conflict: &Conflict{
-						a:      a[x[1] : x[1]+x[2]],
-						aIndex: x[1],
-						o:      o[x[3] : x[3]+x[4]],
-						oIndex: x[3],
-						b:      b[x[5] : x[5]+x[6]],
-						bIndex: x[5],
+				result = append(result, &Diff3MergeResult[T]{
+					Conflict: &Conflict[T]{
+						A:      a[x[1] : x[1]+x[2]],
+						AIndex: x[1],
+						O:      o[x[3] : x[3]+x[4]],
+						OIndex: x[3],
+						B:      b[x[5] : x[5]+x[6]],
+						BIndex: x[5],
 					},
 				})
 			}
@@ -634,24 +634,24 @@ func MergeWithOptions(a, o, b io.Reader, opts MergeOptions) (*MergeResult, error
 	var lines []string
 	for i := 0; i < len(merger); i++ {
 		item := merger[i]
-		if item.ok != nil {
-			lines = append(lines, item.ok...)
+		if item.Ok != nil {
+			lines = append(lines, item.Ok...)
 
 		} else {
 			if opts.Detailed {
-				c := diffCommWithAlgorithm(item.conflict.a, item.conflict.b, opts.Algorithm)
+				c := diffCommWithAlgorithm(item.Conflict.A, item.Conflict.B, opts.Algorithm)
 				for j := 0; j < len(c); j++ {
 					inner := c[j]
-					if inner.common != nil {
-						lines = append(lines, inner.common...)
+					if inner.Common != nil {
+						lines = append(lines, inner.Common...)
 					} else {
 						conflicts = true
-						lines = addConflictMarkers(lines, inner.file1, inner.file2, opts.LabelA, opts.LabelB)
+						lines = addConflictMarkers(lines, inner.File1, inner.File2, opts.LabelA, opts.LabelB)
 					}
 				}
 			} else {
 				conflicts = true
-				lines = addConflictMarkers(lines, item.conflict.a, item.conflict.b, opts.LabelA, opts.LabelB)
+				lines = addConflictMarkers(lines, item.Conflict.A, item.Conflict.B, opts.LabelA, opts.LabelB)
 			}
 		}
 	}

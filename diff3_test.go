@@ -168,3 +168,22 @@ func TestMergeWithOptionsMyers(t *testing.T) {
 		t.Fatalf("unexpected Myers merge output: got %q, want %q", got, want)
 	}
 }
+
+func TestDiff3MergeGenericResultFields(t *testing.T) {
+	a := []int{1, 20, 3}
+	o := []int{1, 2, 3}
+	b := []int{1, 2, 3}
+
+	result := diff3.Diff3Merge(a, o, b, true)
+	var merged []int
+	for _, item := range result {
+		if item.Conflict != nil {
+			t.Fatalf("unexpected conflict: %#v", item.Conflict)
+		}
+		merged = append(merged, item.Ok...)
+	}
+
+	if got, want := fmt.Sprint(merged), "[1 20 3]"; got != want {
+		t.Fatalf("unexpected generic merge output: got %s, want %s", got, want)
+	}
+}
