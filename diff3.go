@@ -413,8 +413,12 @@ func diff3MergeIndices(a, o, b []string) [][]int {
 }
 
 func diff3MergeIndicesWithAlgorithm(a, o, b []string, algorithm DiffAlgorithm) [][]int {
-	m1 := diffIndicesWithAlgorithm(o, a, algorithm)
+	m1Ch := make(chan []*diffIndicesResult, 1)
+	go func() {
+		m1Ch <- diffIndicesWithAlgorithm(o, a, algorithm)
+	}()
 	m2 := diffIndicesWithAlgorithm(o, b, algorithm)
+	m1 := <-m1Ch
 
 	var hunks []*hunk
 	addHunk := func(h *diffIndicesResult, side int) {
