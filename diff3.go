@@ -12,140 +12,38 @@ package diff3
 import (
 	"fmt"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 
-	"github.com/epiclabs-io/diff3/linereader"
+	"github.com/devsisters/go-diff3/linereader"
 )
 
-type candidate struct {
-	file1index int
-	file2index int
-	chain      *candidate
-}
-
-// Text diff algorithm following Hunt and McIlroy 1976.
-// J. W. Hunt and M. D. McIlroy, An algorithm for differential file
-// comparison, Bell Telephone Laboratories CSTR #41 (1976)
-// http://www.cs.dartmouth.edu/~doug/
-func lcs(file1, file2 []string) *candidate {
-	var equivalenceClasses map[string][]int
-	var file2indices []int
-
-	var candidates []*candidate
-	var line string
-	var c *candidate
-	var i, j, jX, r, s int
-
-	equivalenceClasses = make(map[string][]int)
-	for j = 0; j < len(file2); j++ {
-		line = file2[j]
-		equivalenceClasses[line] = append(equivalenceClasses[line], j)
-	}
-
-	candidates = append(candidates, &candidate{file1index: -1, file2index: -1, chain: nil})
-
-	for i = 0; i < len(file1); i++ {
-		line = file1[i]
-		file2indices = equivalenceClasses[line] // || []
-
-		r = 0
-		c = candidates[0]
-
-		for jX = 0; jX < len(file2indices); jX++ {
-			j = file2indices[jX]
-
-			for s = r; s < len(candidates); s++ {
-				if (candidates[s].file2index < j) && ((s == len(candidates)-1) || (candidates[s+1].file2index > j)) {
-					break
-				}
-			}
-
-			if s < len(candidates) {
-				newCandidate := &candidate{file1index: i, file2index: j, chain: candidates[s]}
-				if r == len(candidates) {
-					candidates = append(candidates, c)
-				} else {
-					candidates[r] = c
-				}
-				r = s + 1
-				c = newCandidate
-				if r == len(candidates) {
-					break // no point in examining further (j)s
-				}
-			}
-		}
-
-		if r == len(candidates) {
-			candidates = append(candidates, c)
-		} else {
-			if r > len(candidates) {
-				panic("out of range")
-			} else {
-				candidates[r] = c
-			}
-		}
-	}
-
-	// At this point, we know the LCS: it's in the reverse of the
-	// linked-list through .chain of candidates[candidates.length - 1].
-
-	return candidates[len(candidates)-1]
-}
-
-type resultStruct struct {
-	common []string
-	file1  []string
-	file2  []string
+type DiffResult[T any] struct {
+	Common []T
+	File1  []T
+	File2  []T
 }
 
 // We apply the LCS to build a 'comm'-style picture of the
 // differences between file1 and file2.
-func diffComm(file1, file2 []string) []*resultStruct {
-	var result []*resultStruct
-	var tail1 = len(file1)
-	var tail2 = len(file2)
-	var common = new(resultStruct)
+func DiffComm[T comparable](file1, file2 []T) []*DiffResult[T] {
+	var result []*DiffResult[T]
+	var tail1 int
+	for _, diff := range diffIndices(file1, file2) {
+		if diff.file1[0] > tail1 {
+			result = append(result, &DiffResult[T]{
+				Common: file1[tail1:diff.file1[0]],
+			})
+		}
+		tail1 = diff.file1[0] + diff.file1[1]
 
-	processCommon := func() {
-		if len(common.common) != 0 {
-			slices.Reverse(common.common)
-			result = append(result, common)
-			common = new(resultStruct)
+		if diff.file1[1] > 0 || diff.file2[1] > 0 {
+			result = append(result, &DiffResult[T]{
+				File1: file1[diff.file1[0] : diff.file1[0]+diff.file1[1]],
+				File2: file2[diff.file2[0] : diff.file2[0]+diff.file2[1]],
+			})
 		}
 	}
-
-	for candidate := lcs(file1, file2); candidate != nil; candidate = candidate.chain {
-		different := new(resultStruct)
-
-		tail1--
-		for tail1 > candidate.file1index {
-			different.file1 = append(different.file1, file1[tail1])
-			tail1--
-		}
-
-		tail2--
-		for tail2 > candidate.file2index {
-			different.file2 = append(different.file2, file2[tail2])
-			tail2--
-		}
-
-		if len(different.file1) != 0 || len(different.file2) != 0 {
-			processCommon()
-			slices.Reverse(different.file1)
-			slices.Reverse(different.file2)
-			result = append(result, different)
-		}
-
-		if tail1 >= 0 {
-			common.common = append(common.common, file1[tail1])
-		}
-	}
-
-	processCommon()
-
-	slices.Reverse(result)
 	return result
 }
 
@@ -164,36 +62,19 @@ type patch struct {
 // diff(1)-style patch.
 func diffPatch(file1, file2 []string) []*patch {
 	var result []*patch
-	var tail1 = len(file1)
-	var tail2 = len(file2)
-
-	cd := func(file []string, offset int, length int) *chunkDescription {
-		var chunk []string
-		for i := 0; i < length; i++ {
-			chunk = append(chunk, file[offset+i])
-		}
+	cd := func(file []string, diff [2]int) *chunkDescription {
 		return &chunkDescription{
-			offset: offset,
-			length: length,
-			chunk:  chunk,
+			offset: diff[0],
+			length: diff[1],
+			chunk:  file[diff[0] : diff[0]+diff[1]],
 		}
 	}
-
-	for candidate := lcs(file1, file2); candidate != nil; candidate = candidate.chain {
-		mismatchLength1 := tail1 - candidate.file1index - 1
-		mismatchLength2 := tail2 - candidate.file2index - 1
-		tail1 = candidate.file1index
-		tail2 = candidate.file2index
-
-		if mismatchLength1 != 0 || mismatchLength2 != 0 {
-			result = append(result, &patch{
-				file1: cd(file1, candidate.file1index+1, mismatchLength1),
-				file2: cd(file2, candidate.file2index+1, mismatchLength2),
-			})
-		}
+	for _, diff := range diffIndices(file1, file2) {
+		result = append(result, &patch{
+			file1: cd(file1, diff.file1),
+			file2: cd(file2, diff.file2),
+		})
 	}
-
-	slices.Reverse(result)
 	return result
 }
 
@@ -256,42 +137,66 @@ func applyPatch(file []string, p []*patch) []string {
 }
 
 type diffIndicesResult struct {
-	file1 []int
-	file2 []int
+	file1 [2]int
+	file2 [2]int
 }
 
 // We apply the LCS to give a simple representation of the
 // offsets and lengths of mismatched chunks in the input
 // files. This is used by diff3MergeIndices below.
-func diffIndices(file1, file2 []string) []*diffIndicesResult {
+func diffIndices[T comparable](file1, file2 []T) []*diffIndicesResult {
 	var result []*diffIndicesResult
-	tail1 := len(file1)
-	tail2 := len(file2)
-
-	for candidate := lcs(file1, file2); candidate != nil; candidate = candidate.chain {
-		mismatchLength1 := tail1 - candidate.file1index - 1
-		mismatchLength2 := tail2 - candidate.file2index - 1
-		tail1 = candidate.file1index
-		tail2 = candidate.file2index
-
-		if mismatchLength1 != 0 || mismatchLength2 != 0 {
-			result = append(result, &diffIndicesResult{
-				file1: []int{tail1 + 1, mismatchLength1},
-				file2: []int{tail2 + 1, mismatchLength2},
-			})
+	var last *diffIndicesResult
+	// Find shortest edit script, and merge adjacent chunks
+	for diff := range shortestEditScript(file1, file2, 0, 0) {
+		if last == nil {
+			last = diff
+		} else if last.file1[0]+last.file1[1] == diff.file1[0] && last.file2[0]+last.file2[1] == diff.file2[0] {
+			last.file1[1] += diff.file1[1]
+			last.file2[1] += diff.file2[1]
+		} else {
+			result = append(result, last)
+			last = diff
 		}
 	}
-
-	slices.Reverse(result)
+	if last != nil {
+		result = append(result, last)
+	}
 	return result
 }
 
-type hunk [5]int
-type hunkList []*hunk
+type hunk struct {
+	OOffset  int
+	OLength  int
+	Side     Side
+	ABOffset int // Offset of A or B, depending on Side
+	ABLength int // Length of A or B, depending on Side
+}
+
+type hunkList []hunk
 
 func (h hunkList) Len() int           { return len(h) }
 func (h hunkList) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h hunkList) Less(i, j int) bool { return h[i][0] < h[j][0] }
+func (h hunkList) Less(i, j int) bool { return h[i].OOffset < h[j].OOffset }
+
+type Side int
+
+const (
+	SideConflict Side = iota - 1
+	SideA
+	SideCommon
+	SideB
+)
+
+type MergeIndices struct {
+	Side    Side
+	AOffset int
+	ALength int
+	OOffset int
+	OLength int
+	BOffset int
+	BLength int
+}
 
 // Given three files, A, O, and B, where both A and B are
 // independently derived from O, returns a fairly complicated
@@ -304,43 +209,67 @@ func (h hunkList) Less(i, j int) bool { return h[i][0] < h[j][0] }
 // Computer Science (FSTTCS), December 2007.
 //
 // (http://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf)
-func diff3MergeIndices(a, o, b []string) [][]int {
-	m1 := diffIndices(o, a)
+func Diff3MergeIndices[T comparable](a, o, b []T) []MergeIndices {
+	m1Ch := make(chan []*diffIndicesResult, 1)
+	go func() {
+		m1Ch <- diffIndices(o, a)
+	}()
 	m2 := diffIndices(o, b)
+	m1 := <-m1Ch
 
-	var hunks []*hunk
-	addHunk := func(h *diffIndicesResult, side int) {
-		hunks = append(hunks, &hunk{h.file1[0], side, h.file1[1], h.file2[0], h.file2[1]})
+	var hunks hunkList
+	addHunk := func(h *diffIndicesResult, side Side) {
+		hunks = append(hunks, hunk{
+			OOffset:  h.file1[0],
+			OLength:  h.file1[1],
+			Side:     side,
+			ABOffset: h.file2[0],
+			ABLength: h.file2[1],
+		})
 	}
 	for i := 0; i < len(m1); i++ {
-		addHunk(m1[i], 0)
+		addHunk(m1[i], SideA)
 	}
 	for i := 0; i < len(m2); i++ {
-		addHunk(m2[i], 2)
+		addHunk(m2[i], SideB)
 	}
-	sort.Sort(hunkList(hunks))
+	sort.Sort(hunks)
 
-	var result [][]int
+	var result []MergeIndices
 	var commonOffset = 0
+	var aOffset = 0 // Track current position in A
+	var bOffset = 0 // Track current position in B
+
 	copyCommon := func(targetOffset int) {
 		if targetOffset > commonOffset {
-			result = append(result, []int{1, commonOffset, targetOffset - commonOffset})
+			length := targetOffset - commonOffset
+			result = append(result, MergeIndices{
+				Side:    SideCommon,
+				AOffset: aOffset,
+				ALength: length,
+				BOffset: bOffset,
+				BLength: length,
+				OOffset: commonOffset,
+				OLength: length,
+			})
 			commonOffset = targetOffset
+			aOffset += length
+			bOffset += length
 		}
 	}
 
 	for hunkIndex := 0; hunkIndex < len(hunks); hunkIndex++ {
 		firstHunkIndex := hunkIndex
 		hunk := hunks[hunkIndex]
-		regionLhs := hunk[0]
-		regionRhs := regionLhs + hunk[2]
+		regionLhs := hunk.OOffset
+		regionRhs := regionLhs + hunk.OLength
 		for hunkIndex < len(hunks)-1 {
 			maybeOverlapping := hunks[hunkIndex+1]
-			maybeLhs := maybeOverlapping[0]
+			maybeLhs := maybeOverlapping.OOffset
 			if maybeLhs > regionRhs {
 				break
 			}
-			regionRhs = max(regionRhs, maybeLhs+maybeOverlapping[2])
+			regionRhs = max(regionRhs, maybeLhs+maybeOverlapping.OLength)
 			hunkIndex++
 		}
 
@@ -349,9 +278,26 @@ func diff3MergeIndices(a, o, b []string) [][]int {
 			// The 'overlap' was only one hunk long, meaning that
 			// there's no conflict here. Either a and o were the
 			// same, or b and o were the same.
-			if hunk[4] > 0 {
-				result = append(result, []int{hunk[1], hunk[3], hunk[4]})
+			merge := MergeIndices{
+				Side:    hunk.Side,
+				OOffset: hunk.OOffset,
+				OLength: hunk.OLength,
 			}
+			if merge.Side == SideA {
+				merge.AOffset = aOffset
+				merge.ALength = hunk.ABLength // can be 0 for deletion
+				merge.BOffset = bOffset
+				merge.BLength = hunk.OLength // B unchanged: consumes O-length
+			} else { // SideB
+				merge.BOffset = bOffset
+				merge.BLength = hunk.ABLength // can be 0 for deletion
+				merge.AOffset = aOffset
+				merge.ALength = hunk.OLength // A unchanged: consumes O-length
+			}
+			aOffset += merge.ALength
+			bOffset += merge.BLength
+
+			result = append(result, merge)
 		} else {
 			// A proper conflict. Determine the extents of the
 			// regions involved from a, o and b. Effectively merge
@@ -362,12 +308,12 @@ func diff3MergeIndices(a, o, b []string) [][]int {
 			regions := [][]int{{len(a), -1, len(o), -1}, nil, {len(b), -1, len(o), -1}}
 			for i := firstHunkIndex; i <= hunkIndex; i++ {
 				hunk = hunks[i]
-				side := hunk[1]
+				side := hunk.Side
 				r := regions[side]
-				oLhs := hunk[0]
-				oRhs := oLhs + hunk[2]
-				abLhs := hunk[3]
-				abRhs := abLhs + hunk[4]
+				oLhs := hunk.OOffset
+				oRhs := oLhs + hunk.OLength
+				abLhs := hunk.ABOffset
+				abRhs := abLhs + hunk.ABLength
 				r[0] = min(abLhs, r[0])
 				r[1] = max(abRhs, r[1])
 				r[2] = min(oLhs, r[2])
@@ -377,10 +323,18 @@ func diff3MergeIndices(a, o, b []string) [][]int {
 			aRhs := regions[0][1] + (regionRhs - regions[0][3])
 			bLhs := regions[2][0] + (regionLhs - regions[2][2])
 			bRhs := regions[2][1] + (regionRhs - regions[2][3])
-			result = append(result, []int{-1,
-				aLhs, aRhs - aLhs,
-				regionLhs, regionRhs - regionLhs,
-				bLhs, bRhs - bLhs})
+			result = append(result, MergeIndices{
+				Side:    SideConflict,
+				AOffset: aOffset,
+				ALength: aRhs - aLhs,
+				BOffset: bOffset,
+				BLength: bRhs - bLhs,
+				OOffset: regionLhs,
+				OLength: regionRhs - regionLhs,
+			})
+			// Update position trackers for conflict region
+			aOffset += aRhs - aLhs
+			bOffset += bRhs - bLhs
 		}
 		commonOffset = regionRhs
 	}
@@ -390,78 +344,78 @@ func diff3MergeIndices(a, o, b []string) [][]int {
 }
 
 // Conflict describes a merge conflict
-type Conflict struct {
-	a      []string
-	aIndex int
-	o      []string
-	oIndex int
-	b      []string
-	bIndex int
+type Conflict[T any] struct {
+	A      []T
+	AIndex int
+	O      []T
+	OIndex int
+	B      []T
+	BIndex int
 }
 
 // Diff3MergeResult describes a merge result
-type Diff3MergeResult struct {
-	ok       []string
-	conflict *Conflict
+type Diff3MergeResult[T any] struct {
+	Ok       []T
+	Conflict *Conflict[T]
 }
 
 // Diff3Merge applies the output of diff3MergeIndices to actually
 // construct the merged file; the returned result alternates
-// between 'ok' and 'conflict' blocks.
-func Diff3Merge(a, o, b []string, excludeFalseConflicts bool) []*Diff3MergeResult {
-	var result []*Diff3MergeResult
-	files := [][]string{a, o, b}
-	indices := diff3MergeIndices(a, o, b)
+// between 'Ok' and 'Conflict' blocks.
+func Diff3Merge[T comparable](a, o, b []T, excludeFalseConflicts bool) []*Diff3MergeResult[T] {
+	var result []*Diff3MergeResult[T]
+	indices := Diff3MergeIndices(a, o, b)
 
-	var okLines []string
+	var okLines []T
 	flushOk := func() {
 		if len(okLines) != 0 {
-			result = append(result, &Diff3MergeResult{ok: okLines})
+			result = append(result, &Diff3MergeResult[T]{Ok: okLines})
 		}
 		okLines = nil
 	}
 
-	pushOk := func(xs []string) {
+	pushOk := func(xs []T) {
 		for j := 0; j < len(xs); j++ {
 			okLines = append(okLines, xs[j])
 		}
 	}
 
-	isTrueConflict := func(rec []int) bool {
-		if rec[2] != rec[6] {
+	isTrueConflict := func(rec MergeIndices) bool {
+		if rec.ALength != rec.BLength {
 			return true
 		}
-		var aoff = rec[1]
-		var boff = rec[5]
-		for j := 0; j < rec[2]; j++ {
-			if a[j+aoff] != b[j+boff] {
+		for j := 0; j < rec.ALength; j++ {
+			if a[j+rec.AOffset] != b[j+rec.BOffset] {
 				return true
 			}
 		}
 		return false
 	}
 
-	for i := 0; i < len(indices); i++ {
-		var x = indices[i]
-		var side = x[0]
-		if side == -1 {
+	for _, x := range indices {
+		switch x.Side {
+		case SideConflict:
 			if excludeFalseConflicts && !isTrueConflict(x) {
-				pushOk(files[0][x[1] : x[1]+x[2]])
+				pushOk(a[x.AOffset : x.AOffset+x.ALength])
 			} else {
 				flushOk()
-				result = append(result, &Diff3MergeResult{
-					conflict: &Conflict{
-						a:      a[x[1] : x[1]+x[2]],
-						aIndex: x[1],
-						o:      o[x[3] : x[3]+x[4]],
-						oIndex: x[3],
-						b:      b[x[5] : x[5]+x[6]],
-						bIndex: x[5],
+				result = append(result, &Diff3MergeResult[T]{
+					Conflict: &Conflict[T]{
+						A:      a[x.AOffset : x.AOffset+x.ALength],
+						AIndex: x.AOffset,
+						O:      o[x.OOffset : x.OOffset+x.OLength],
+						OIndex: x.OOffset,
+						B:      b[x.BOffset : x.BOffset+x.BLength],
+						BIndex: x.BOffset,
 					},
 				})
 			}
-		} else {
-			pushOk(files[side][x[1] : x[1]+x[2]])
+		case SideA:
+			pushOk(a[x.AOffset : x.AOffset+x.ALength])
+		case SideB:
+			pushOk(b[x.BOffset : x.BOffset+x.BLength])
+		case SideCommon:
+			pushOk(o[x.OOffset : x.OOffset+x.OLength])
 		}
 	}
 
@@ -471,7 +425,7 @@ func Diff3Merge(a, o, b []string, excludeFalseConflicts bool) []*Diff3MergeResul
 
 // MergeResult describes a merge result
 type MergeResult struct {
-	Conflicts bool      //Conflict indicates if there is any merge conflict
+	Conflicts bool      // Conflict indicates if there is any merge conflict
 	Result    io.Reader // returns a reader that contains the merge result
 }
 
@@ -504,24 +458,24 @@ func Merge(a, o, b io.Reader, detailed bool, labelA string, labelB string) (*Mer
 	var lines []string
 	for i := 0; i < len(merger); i++ {
 		var item = merger[i]
-		if item.ok != nil {
-			lines = append(lines, item.ok...)
+		if item.Ok != nil {
+			lines = append(lines, item.Ok...)
 
 		} else {
 			if detailed {
-				var c = diffComm(item.conflict.a, item.conflict.b)
+				var c = DiffComm(item.Conflict.A, item.Conflict.B)
 				for j := 0; j < len(c); j++ {
 					var inner = c[j]
-					if inner.common != nil {
-						lines = append(lines, inner.common...)
+					if inner.Common != nil {
+						lines = append(lines, inner.Common...)
 					} else {
 						conflicts = true
-						lines = addConflictMarkers(lines, inner.file1, inner.file2, labelA, labelB)
+						lines = addConflictMarkers(lines, inner.File1, inner.File2, labelA, labelB)
 					}
 				}
 			} else {
 				conflicts = true
-				lines = addConflictMarkers(lines, item.conflict.a, item.conflict.b, labelA, labelB)
+				lines = addConflictMarkers(lines, item.Conflict.A, item.Conflict.B, labelA, labelB)
 			}
 		}
 	}

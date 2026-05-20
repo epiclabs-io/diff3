@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/epiclabs-io/diff3"
+	"github.com/devsisters/go-diff3"
 )
 
 func compareReader(t *testing.T, a, b io.Reader) bool {

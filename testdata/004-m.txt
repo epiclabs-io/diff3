@@ -17,16 +17,16 @@ import (
 	"sort"
 	"strings"
 )
-
 <<<<<<<<< A
 =========
+
 type Candidate struct {
 	file1index int
 	file2index int
 	chain      *Candidate
 }
-
 >>>>>>>>> B
+
 // Text diff algorithm following Hunt and McIlroy 1976.
 // J. W. Hunt and M. D. McIlroy, An algorithm for differential file
 // comparison, Bell Telephone Laboratories CSTR #41 (1976)
